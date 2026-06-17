@@ -12,17 +12,22 @@ const PORT = process.env.PORT || 5000
 app.use(cors())
 app.use(express.json())
 
-// MySQL 연결 풀 생성
+// MySQL 연결 풀 생성 — Render 등에서 제공하는 환경변수만 사용합니다
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '1017gksgo^^',
-  database: process.env.DB_NAME || 'who_is_criminal',
-  port: process.env.DB_PORT || 3306,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 })
+
+// 빠른 검증용 경고(로컬 테스트 시 .env가 설정되어 있는지 확인하세요)
+if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASSWORD || !process.env.DB_NAME) {
+  console.warn('⚠️  DB 환경변수가 설정되지 않았습니다. Render의 환경변수 또는 .env 파일을 확인하세요 (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME).')
+}
 
 // 데이터베이스 초기화 함수
 async function initializeDatabase() {
@@ -266,7 +271,7 @@ async function startServer() {
 
     app.listen(PORT, () => {
       console.log(`🚀 서버가 포트 ${PORT}에서 실행 중입니다`)
-      console.log(`📊 API: http://localhost:${PORT}/api/rankings`)
+      console.log(`📊 API 엔드포인트: /api/rankings`)
     })
   } catch (error) {
     console.error('서버 시작 실패:', error)
