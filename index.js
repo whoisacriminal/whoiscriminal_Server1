@@ -3,7 +3,10 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import mysql from 'mysql2/promise'
 
-dotenv.config()
+const isProduction = process.env.NODE_ENV === 'production'
+if (!isProduction) {
+  dotenv.config()
+}
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -12,21 +15,32 @@ const PORT = process.env.PORT || 5000
 app.use(cors())
 app.use(express.json())
 
+const dbHost = process.env.DB_HOST || process.env.DATABASE_HOST || process.env.MYSQL_HOST
+const dbUser = process.env.DB_USER || process.env.DATABASE_USER || process.env.MYSQL_USER
+const dbPassword = process.env.DB_PASSWORD || process.env.DATABASE_PASSWORD || process.env.MYSQL_PASSWORD
+const dbName = process.env.DB_NAME || process.env.DATABASE_NAME || process.env.MYSQL_DATABASE
+const dbPort = process.env.DB_PORT || process.env.DATABASE_PORT || process.env.MYSQL_PORT
+
+if (isProduction && dbHost === 'localhost') {
+  console.error('⚠️  Production 환경에서 DB_HOST가 localhost로 설정되어 있습니다. Render 배포에서는 외부 DB 호스트를 사용해야 합니다.')
+  process.exit(1)
+}
+
 // MySQL 연결 풀 생성 — Render 등에서 제공하는 환경변수만 사용합니다
 const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
+  host: dbHost,
+  user: dbUser,
+  password: dbPassword,
+  database: dbName,
+  port: dbPort ? Number(dbPort) : undefined,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 })
 
 // 빠른 검증용 경고(로컬 테스트 시 .env가 설정되어 있는지 확인하세요)
-if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASSWORD || !process.env.DB_NAME) {
-  console.warn('⚠️  DB 환경변수가 설정되지 않았습니다. Render의 환경변수 또는 .env 파일을 확인하세요 (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME).')
+if (!dbHost || !dbUser || !dbPassword || !dbName) {
+  console.warn('⚠️  DB 환경변수가 설정되지 않았습니다. Render의 환경변수 또는 .env 파일을 확인하세요.')
 }
 
 // 데이터베이스 초기화 함수 (재시도 로직 포함)
