@@ -29,70 +29,98 @@ if (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_PASSWORD || 
   console.warn('⚠️  DB 환경변수가 설정되지 않았습니다. Render의 환경변수 또는 .env 파일을 확인하세요 (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME).')
 }
 
-// 데이터베이스 초기화 함수
+// 데이터베이스 초기화 함수 (재시도 로직 포함)
+let dbConnected = false
 async function initializeDatabase() {
-  const connection = await pool.getConnection()
-  try {
-    // rankings 테이블 생성
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS rankings (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        playTime INT NOT NULL COMMENT '초 단위',
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_name (name),
-        INDEX idx_playTime (playTime),
-        INDEX idx_createdAt (createdAt)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `)
+  const maxAttempts = 5
+  const baseDelay = 1000 // ms
 
-    await connection.execute(`ALTER TABLE rankings ADD COLUMN criminalCaught TINYINT(1) NOT NULL DEFAULT 0`).catch((err) => {
-      if (!/Duplicate column name/.test(err.message)) throw err
-    })
-    await connection.execute(`ALTER TABLE rankings ADD COLUMN suspectId VARCHAR(50) DEFAULT NULL`).catch((err) => {
-      if (!/Duplicate column name/.test(err.message)) throw err
-    })
-    await connection.execute(`ALTER TABLE rankings ADD COLUMN suspectName VARCHAR(100) DEFAULT NULL`).catch((err) => {
-      if (!/Duplicate column name/.test(err.message)) throw err
-    })
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let connection
+    try {
+      connection = await pool.getConnection()
 
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS suspect_picks (
-        suspectId VARCHAR(50) PRIMARY KEY,
-        suspectName VARCHAR(100) NOT NULL,
-        picks INT NOT NULL DEFAULT 0,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `)
+      // rankings 테이블 생성
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS rankings (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          playTime INT NOT NULL COMMENT '초 단위',
+          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_name (name),
+          INDEX idx_playTime (playTime),
+          INDEX idx_createdAt (createdAt)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `)
 
-    await connection.execute(`CREATE INDEX idx_criminalCaught ON rankings (criminalCaught)`).catch((err) => {
-      if (!/Duplicate key name/.test(err.message) && !/already exists/.test(err.message)) throw err
-    })
+      await connection.execute(`ALTER TABLE rankings ADD COLUMN criminalCaught TINYINT(1) NOT NULL DEFAULT 0`).catch((err) => {
+        if (!/Duplicate column name/.test(err.message)) throw err
+      })
+      await connection.execute(`ALTER TABLE rankings ADD COLUMN suspectId VARCHAR(50) DEFAULT NULL`).catch((err) => {
+        if (!/Duplicate column name/.test(err.message)) throw err
+      })
+      await connection.execute(`ALTER TABLE rankings ADD COLUMN suspectName VARCHAR(100) DEFAULT NULL`).catch((err) => {
+        if (!/Duplicate column name/.test(err.message)) throw err
+      })
 
-    console.log('✓ Rankings / suspect_picks 테이블 준비됨')
-  } catch (error) {
-    console.error('DB 초기화 오류:', error.message)
-    console.error('DB 연결 설정:', {
-      host: process.env.DB_HOST || '<not set>',
-      port: process.env.DB_PORT || '<not set>',
-      user: process.env.DB_USER || '<not set>',
-      database: process.env.DB_NAME || '<not set>',
-    })
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS suspect_picks (
+          suspectId VARCHAR(50) PRIMARY KEY,
+          suspectName VARCHAR(100) NOT NULL,
+          picks INT NOT NULL DEFAULT 0,
+          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `)
 
-    if (error.code === 'ECONNREFUSED' || /ECONNREFUSED/.test(error.message)) {
-      console.error('⚠️  DB 연결이 거부되었습니다. Render에서 `DB_HOST`가 localhost로 설정되어 있지 않은지, 또는 외부에서 접근 가능한 DB 호스트를 사용중인지 확인하세요.')
+      await connection.execute(`
+        CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY unique_name (name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `)
+
+      await connection.execute(`CREATE INDEX idx_criminalCaught ON rankings (criminalCaught)`).catch((err) => {
+        if (!/Duplicate key name/.test(err.message) && !/already exists/.test(err.message)) throw err
+      })
+
+      console.log('✓ Rankings / suspect_picks / users 테이블 준비됨')
+      dbConnected = true
+      return
+    } catch (error) {
+      const isLast = attempt === maxAttempts
+      console.error(`DB 초기화 시도 ${attempt} 실패:`, error.message)
+      console.error('DB 연결 설정:', {
+        host: process.env.DB_HOST || '<not set>',
+        port: process.env.DB_PORT || '<not set>',
+        user: process.env.DB_USER || '<not set>',
+        database: process.env.DB_NAME || '<not set>',
+      })
+
+      if (error.code === 'ECONNREFUSED' || /ECONNREFUSED/.test(error.message)) {
+        console.error('⚠️  DB 연결이 거부되었습니다. Render에서 `DB_HOST`가 localhost로 설정되어 있지 않은지, 또는 외부에서 접근 가능한 DB 호스트를 사용중인지 확인하세요.')
+      }
+
+      if (connection) connection.release()
+
+      if (isLast) break
+      const delay = baseDelay * Math.pow(2, attempt - 1)
+      console.log(`다음 시도까지 ${delay}ms 대기합니다...`)
+      await new Promise((r) => setTimeout(r, delay))
     }
-  } finally {
-    connection.release()
   }
+
+  console.error('DB 초기화 실패: 모든 재시도 실패. 서버는 DB 없이 시작됩니다 (일부 기능 제한).')
 }
 
 // API 엔드포인트
 
 // 1. 새로운 랭킹 기록 생성
 app.post('/api/rankings', async (req, res) => {
+  if (!dbConnected) return res.status(503).json({ error: 'DB 연결 불가' })
   const { name, playTime, criminalCaught = false, suspectId = null, suspectName = null } = req.body
 
   if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -150,8 +178,40 @@ app.post('/api/rankings', async (req, res) => {
   }
 })
 
+// 2. 사용자 이름 저장
+app.post('/api/users', async (req, res) => {
+  if (!dbConnected) return res.status(503).json({ error: 'DB 연결 불가' })
+  const { name } = req.body
+
+  if (!name || typeof name !== 'string' || name.trim() === '') {
+    return res.status(400).json({ error: '유효한 이름이 필요합니다' })
+  }
+
+  try {
+    const connection = await pool.getConnection()
+    try {
+      // 중복 이름이면 기존 id를 재사용하도록 LAST_INSERT_ID 트릭 사용
+      const [result] = await connection.execute(
+        `INSERT INTO users (name)
+         VALUES (?)
+         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+        [name.trim()]
+      )
+
+      const id = result.insertId || null
+      res.status(201).json({ id, name: name.trim(), createdAt: new Date().toISOString() })
+    } finally {
+      connection.release()
+    }
+  } catch (error) {
+    console.error('사용자 저장 오류:', error)
+    res.status(500).json({ error: '사용자 저장에 실패했습니다' })
+  }
+})
+
 // 모든 랭킹 조회 (빠른 순서대로)
 app.get('/api/rankings', async (req, res) => {
+  if (!dbConnected) return res.status(503).json({ error: 'DB 연결 불가' })
   try {
     const connection = await pool.getConnection()
     try {
@@ -190,6 +250,7 @@ app.get('/api/rankings', async (req, res) => {
 
 // 특정 용의자 통계 조회
 app.get('/api/suspects', async (req, res) => {
+  if (!dbConnected) return res.status(503).json({ error: 'DB 연결 불가' })
   try {
     const connection = await pool.getConnection()
     try {
@@ -219,6 +280,7 @@ app.get('/api/suspects', async (req, res) => {
 
 // 특정 사용자의 최신 기록 조회
 app.get('/api/rankings/user/:name', async (req, res) => {
+  if (!dbConnected) return res.status(503).json({ error: 'DB 연결 불가' })
   const { name } = req.params
 
   if (!name || name.trim() === '') {
@@ -282,10 +344,15 @@ async function startServer() {
     app.listen(PORT, () => {
       console.log(`🚀 서버가 포트 ${PORT}에서 실행 중입니다`)
       console.log(`📊 API 엔드포인트: /api/rankings`)
+      if (!dbConnected) console.warn('⚠️ DB가 연결되지 않았습니다. 일부 엔드포인트는 동작하지 않을 수 있습니다.')
     })
   } catch (error) {
-    console.error('서버 시작 실패:', error)
-    process.exit(1)
+    console.error('서버 시작 중 처리되지 않은 오류:', error)
+    // DB 초기화가 치명적이지 않도록 프로세스 종료하지 않습니다.
+    app.listen(PORT, () => {
+      console.log(`🚀 서버가 포트 ${PORT}에서 실행 중입니다 (비정상 모드)`)
+      if (!dbConnected) console.warn('⚠️ DB가 연결되지 않았습니다. 일부 엔드포인트는 동작하지 않을 수 있습니다.')
+    })
   }
 }
 
