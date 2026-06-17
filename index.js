@@ -74,6 +74,16 @@ async function initializeDatabase() {
     console.log('✓ Rankings / suspect_picks 테이블 준비됨')
   } catch (error) {
     console.error('DB 초기화 오류:', error.message)
+    console.error('DB 연결 설정:', {
+      host: process.env.DB_HOST || '<not set>',
+      port: process.env.DB_PORT || '<not set>',
+      user: process.env.DB_USER || '<not set>',
+      database: process.env.DB_NAME || '<not set>',
+    })
+
+    if (error.code === 'ECONNREFUSED' || /ECONNREFUSED/.test(error.message)) {
+      console.error('⚠️  DB 연결이 거부되었습니다. Render에서 `DB_HOST`가 localhost로 설정되어 있지 않은지, 또는 외부에서 접근 가능한 DB 호스트를 사용중인지 확인하세요.')
+    }
   } finally {
     connection.release()
   }
